@@ -1,0 +1,43 @@
+# Global Configuration
+name: "go-web-app"
+
+# Application Scalability Baseline
+replicaCount: 3
+
+# Container Image Configuration
+# The image.tag acts as an immutable identifier (e.g., git commit SHA) pushed by your GHA pipeline.
+# If tag is left empty or null, Helm defaults back to the .Chart.AppVersion value.
+image:
+  repository: "uvaishnav/go-web-app"
+  tag: "v1" # Overridden dynamically in CI/CD via: --set image.tag=${{ env.SHA_TAG }}
+
+# ==============================================================================
+# Architecture Operational Context (Documenting values hardcoded in deployment)
+# ==============================================================================
+# The values below represent the hardened profiles baked into your manifest template. 
+# They are noted here so your SRE team can audit your template configuration.
+
+# Network Port Configuration
+service:
+  port: 80
+  targetPort: 8080
+
+# Application Resource Enforcements
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Health and Traffic Safety Checkpoints
+probes:
+  liveness:
+    path: "/healthz"
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: "/ready"
+    initialDelaySeconds: 2
+    periodSeconds: 5

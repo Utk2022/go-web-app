@@ -1,0 +1,78 @@
+name: Production Enterprise CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  validate-and-secure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/with-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Execute Unit Tests with Coverage
+        run: |
+          go test -v -race -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Linting check (golangci-lint)
+        uses: golangci-lint/golangci-lint-action@v6
+        with:
+          version: v1.59
+
+      - name: Static Application Security Testing (SAST)
+        uses: securego/gosec@master
+        with:
+          args: ./...
+
+  build-and-ship:
+    needs: validate-and-secure
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Enterprise Registry (AWS ECR / DockerHub)
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate Immutable Tags
+        id: meta
+        run: |
+          echo "SHA_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Build and Push hardened image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            uvaishnav/go-web-app:latest
+            uvaishnav/go-web-app:${{ env.SHA_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container Image Vulnerability Scan (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'uvaishnav/go-web-app:${{ env.SHA_TAG }}'
+          format: 'table'
+          exit-code: '1' # Fails pipeline if CRITICAL vulnerabilities are found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
