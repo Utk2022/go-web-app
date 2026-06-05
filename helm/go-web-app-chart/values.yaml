@@ -9,7 +9,7 @@ replicaCount: 3
 # If tag is left empty or null, Helm defaults back to the .Chart.AppVersion value.
 image:
   repository: "uvaishnav/go-web-app"
-  tag: "v1" # Overridden dynamically in CI/CD via: --set image.tag=${{ env.SHA_TAG }}
+  tag: ""
 
 # ==============================================================================
 # Architecture Operational Context (Documenting values hardcoded in deployment)
