@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 )
 
 func homePage(w http.ResponseWriter, r *http.Request) {
@@ -32,8 +33,19 @@ func main() {
 	http.HandleFunc("/about", aboutPage)
 	http.HandleFunc("/contact", contactPage)
 
-	err := http.ListenAndServe("0.0.0.0:8080", nil)
-	if err != nil {
-		log.Fatal(err)
+        server := &http.Server{
+		Addr:         "0.0.0.0:8080",
+		Handler:      nil, 
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	log.Println("Starting production-secure web server on :8080...")
+	
+	// 2. FIX: Call the method on the variable 'server', NOT the package function
+	err := server.ListenAndServe() 
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Server failed to start: %v", err)
 	}
 }
