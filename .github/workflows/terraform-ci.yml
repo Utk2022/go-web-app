@@ -30,9 +30,11 @@ jobs:
       fail-fast: false
 
       matrix:
-        directory:
-          - terraform/bootstrap
-          - terraform/eks
+        include:
+          - directory: terraform/bootstrap
+            artifact_name: bootstrap
+          - directory: terraform/eks
+            artifact_name: eks
 
     steps:
 
@@ -88,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: trivy-terraform-${{ matrix.directory }}
+          name: trivy-terraform-${{ matrix.artifact_name }}
           path: trivy-terraform.json
           retention-days: 14
 
