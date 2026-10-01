@@ -1,0 +1,463 @@
+name: Application CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.1"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+jobs:
+
+  # ============================================================
+  # Validation + image build
+  # ============================================================
+  validate:
+    name: Validate, test and scan
+    runs-on: ubuntu-24.04
+
+    # The AWS OIDC token is harmless on PRs because the IAM
+    # trust policy only allows the main branch subject.
+    #
+    # These permissions are required for the main-branch
+    # publishing/provenance steps later in this job.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+
+      # --------------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------------
+      - name: Checkout source
+        uses: actions/checkout@v7.0.1
+
+
+      # --------------------------------------------------------
+      # 2. Go setup
+      # --------------------------------------------------------
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+
+      # --------------------------------------------------------
+      # 3. Basic source information
+      # --------------------------------------------------------
+      - name: Display build context
+        run: |
+          set -euo pipefail
+
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Commit:     $GITHUB_SHA"
+          echo "Ref:        $GITHUB_REF"
+          echo "Event:      $GITHUB_EVENT_NAME"
+
+          go version
+
+
+      # --------------------------------------------------------
+      # 4. gofmt validation
+      # --------------------------------------------------------
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          files="$(gofmt -l .)"
+
+          if [[ -n "$files" ]]; then
+            echo "The following Go files are not formatted:"
+            printf '%s\n' "$files"
+            echo
+            echo "Run: gofmt -w ."
+            exit 1
+          fi
+
+          echo "All Go files are properly formatted."
+
+
+      # --------------------------------------------------------
+      # 5. go vet
+      # --------------------------------------------------------
+      - name: Run go vet
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          set -euo pipefail
+          go vet ./...
+
+
+      # --------------------------------------------------------
+      # 6. Unit tests
+      # --------------------------------------------------------
+      - name: Run unit tests
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          set -euo pipefail
+          go test ./...
+
+
+      # --------------------------------------------------------
+      # 7. Race detector
+      # --------------------------------------------------------
+      - name: Run race detector
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          set -euo pipefail
+          go test -race ./...
+
+
+      # --------------------------------------------------------
+      # 8. Dependency verification
+      # --------------------------------------------------------
+      - name: Verify Go modules
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          set -euo pipefail
+          go mod verify
+
+
+      # --------------------------------------------------------
+      # 9. Go vulnerability analysis
+      # --------------------------------------------------------
+      - name: Install govulncheck
+        run: |
+          set -euo pipefail
+
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+
+      - name: Run govulncheck
+        env:
+          GOFLAGS: "-mod=readonly"
+        run: |
+          set -euo pipefail
+          govulncheck ./...
+
+
+      # --------------------------------------------------------
+      # 10. Helm validation
+      # --------------------------------------------------------
+      - name: Install Helm
+        uses: azure/setup-helm@v4.3.1
+        with:
+          version: v3.19.4
+
+
+      - name: Lint Helm chart
+        run: |
+          set -euo pipefail
+
+          helm lint ./helm/go-web-app-chart
+
+
+      # --------------------------------------------------------
+      # 11. Docker Buildx
+      # --------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.3.0
+
+      # --------------------------------------------------------
+      # 13. Build production image locally
+      # --------------------------------------------------------
+      - name: Build production image
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+
+          # Load into the runner's local Docker daemon so that
+          # Trivy and Syft can scan the exact same image.
+          load: true
+
+          tags: |
+            go-web-app:${{ github.sha }}
+
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.sha }}
+
+          cache-from: type=gha,scope=go-web-app
+          cache-to: type=gha,mode=max,scope=go-web-app
+
+
+      # --------------------------------------------------------
+      # 14. Define local image name
+      # --------------------------------------------------------
+      - name: Set image environment
+        run: |
+          set -euo pipefail
+
+          echo "LOCAL_IMAGE=go-web-app:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+
+      # --------------------------------------------------------
+      # 15. Trivy filesystem report
+      # --------------------------------------------------------
+      - name: Trivy filesystem scan - report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-filesystem.json
+          ignore-unfixed: true
+          exit-code: "0"
+
+
+      # --------------------------------------------------------
+      # 16. Upload filesystem report
+      # --------------------------------------------------------
+      - name: Upload filesystem security report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: trivy-filesystem-${{ github.sha }}
+          path: trivy-filesystem.json
+          retention-days: 14
+
+
+      # --------------------------------------------------------
+      # 17. Trivy filesystem security gate
+      # --------------------------------------------------------
+      - name: Trivy filesystem security gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+
+      # --------------------------------------------------------
+      # 18. Trivy image report
+      # --------------------------------------------------------
+      - name: Trivy image scan - report
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: json
+          output: trivy-image.json
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: "0"
+
+
+      # --------------------------------------------------------
+      # 19. Upload image report
+      # --------------------------------------------------------
+      - name: Upload image security report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: trivy-image-${{ github.sha }}
+          path: trivy-image.json
+          retention-days: 14
+
+
+      # --------------------------------------------------------
+      # 20. Trivy image security gate
+      # --------------------------------------------------------
+      - name: Trivy image security gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          format: table
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+
+      # --------------------------------------------------------
+      # 21. Generate SBOM
+      # --------------------------------------------------------
+      - name: Generate container SBOM
+        uses: anchore/sbom-action@v0.24.2
+        with:
+          image: ${{ env.LOCAL_IMAGE }}
+          format: spdx-json
+          output-file: go-web-app-sbom.spdx.json
+          artifact-name: go-web-app-sbom-${{ github.sha }}.spdx.json
+
+
+      # --------------------------------------------------------
+      # 22. Publish only from main
+      # --------------------------------------------------------
+      - name: Configure AWS credentials
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+
+
+      # --------------------------------------------------------
+      # 23. Get AWS account ID
+      # --------------------------------------------------------
+      #
+      # This runs only for main because subsequent ECR steps
+      # are main-only.
+      #
+      - name: Validate AWS identity
+        id: account
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity \
+            --query Account \
+            --output text)"
+
+          echo "AWS account: ${ACCOUNT_ID}"
+
+          echo "account_id=${ACCOUNT_ID}" >> "$GITHUB_OUTPUT"
+
+
+      # --------------------------------------------------------
+      # 24. Login to ECR
+      # --------------------------------------------------------
+      - name: Login to Amazon ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+
+      # --------------------------------------------------------
+      # 25. Build ECR image reference
+      # --------------------------------------------------------
+      - name: Set ECR image reference
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="${{ steps.account.outputs.account_id }}"
+
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          IMAGE_NAME="${REGISTRY}/${ECR_REPOSITORY}"
+
+          IMAGE_TAG="${GITHUB_SHA}"
+
+          FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "ECR_REGISTRY=${REGISTRY}" >> "$GITHUB_ENV"
+          echo "ECR_IMAGE_NAME=${IMAGE_NAME}" >> "$GITHUB_ENV"
+          echo "ECR_IMAGE=${FULL_IMAGE}" >> "$GITHUB_ENV"
+
+
+      # --------------------------------------------------------
+      # 26. Tag local image for ECR
+      # --------------------------------------------------------
+      - name: Tag image for ECR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+
+          docker tag \
+            "${LOCAL_IMAGE}" \
+            "${ECR_IMAGE}"
+
+
+      # --------------------------------------------------------
+      # 27. Push immutable Git SHA image
+      # --------------------------------------------------------
+      - name: Push image to ECR
+        id: push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+
+          echo "Checking whether image tag already exists..."
+
+          EXISTING_DIGEST="$(
+            aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids "imageTag=${GITHUB_SHA}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2>/dev/null || true
+          )"
+
+          if [[ -n "${EXISTING_DIGEST}" && "${EXISTING_DIGEST}" != "None" ]]; then
+            echo "Image tag ${GITHUB_SHA} already exists."
+            echo "ECR uses immutable tags, so the existing image will not be overwritten."
+
+            echo "digest=${EXISTING_DIGEST}" >> "$GITHUB_OUTPUT"
+
+            exit 0
+          fi
+
+          docker push "${ECR_IMAGE}"
+
+          DIGEST="$(
+            aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids "imageTag=${GITHUB_SHA}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text
+          )"
+
+          echo "ECR digest: ${DIGEST}"
+
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+
+      # --------------------------------------------------------
+      # 28. Generate GitHub artifact provenance
+      # --------------------------------------------------------
+      #
+      # GitHub artifact attestations produce signed provenance
+      # associated with the repository and build.
+      #
+      - name: Attest container image provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.ECR_IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+
+
+      # --------------------------------------------------------
+      # 29. Build summary
+      # --------------------------------------------------------
+      - name: Publish CI summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Go Web App CI"
+            echo
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Repository | ${GITHUB_REPOSITORY} |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Event | ${GITHUB_EVENT_NAME} |"
+            echo "| Go | ${GO_VERSION} |"
+            echo "| Docker image | \`${LOCAL_IMAGE}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

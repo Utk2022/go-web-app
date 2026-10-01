@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: go-web-app
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: go-web-app
+
+  policyTypes:
+    - Ingress
+
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080

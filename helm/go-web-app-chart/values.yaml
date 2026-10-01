@@ -1,0 +1,100 @@
+replicaCount: 3
+
+image:
+  repository: 891943684030.dkr.ecr.us-east-1.amazonaws.com/go-web-app-sre-dev/go-web-app
+  pullPolicy: IfNotPresent
+  tag: 4ffd10324fec
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: http
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  startup:
+    path: /healthz
+    port: http
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 30
+    successThreshold: 1
+
+  readiness:
+    path: /readyz
+    port: http
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+    successThreshold: 1
+
+  liveness:
+    path: /healthz
+    port: http
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+    successThreshold: 1
+
+terminationGracePeriodSeconds: 30
+
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 4
+
+  targetCPUUtilizationPercentage: 60
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      selectPolicy: Min
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+
+ingress:
+  enabled: false
+
+httpRoute:
+  enabled: false

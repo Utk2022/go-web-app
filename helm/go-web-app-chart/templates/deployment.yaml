@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-web-app
+  labels:
+    app: go-web-app
+    app.kubernetes.io/name: go-web-app
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  # Keep the old version available for rollback.
+  revisionHistoryLimit: 5
+
+  # Give a new ReplicaSet time to become healthy.
+  minReadySeconds: 5
+
+  # Prevent a rollout from hanging forever.
+  progressDeadlineSeconds: 600
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never intentionally reduce the number of available replicas
+      # during a normal rolling update.
+      maxUnavailable: 0
+
+      # Allow one additional Pod during rollout.
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: go-web-app
+
+  template:
+    metadata:
+      labels:
+        app: go-web-app
+        app.kubernetes.io/name: go-web-app
+        app.kubernetes.io/component: web
+
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+
+      # ----------------------------------------------------------
+      # Spread Pods across Availability Zones.
+      # ----------------------------------------------------------
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+
+      containers:
+        - name: go-web-app
+
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ------------------------------------------------------
+          # Resource requests and limits
+          # ------------------------------------------------------
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          # ------------------------------------------------------
+          # Container security
+          # ------------------------------------------------------
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+
+          # ------------------------------------------------------
+          # Startup probe
+          #
+          # Kubernetes won't start liveness/readiness checking
+          # until this succeeds.
+          # ------------------------------------------------------
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: {{ .Values.probes.startup.port }}
+              scheme: HTTP
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            successThreshold: {{ .Values.probes.startup.successThreshold }}
+
+          # ------------------------------------------------------
+          # Readiness probe
+          #
+          # Failure removes this Pod from Service endpoints.
+          # ------------------------------------------------------
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: {{ .Values.probes.readiness.port }}
+              scheme: HTTP
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            successThreshold: {{ .Values.probes.readiness.successThreshold }}
+
+          # ------------------------------------------------------
+          # Liveness probe
+          #
+          # Repeated failure causes kubelet to restart the container.
+          # ------------------------------------------------------
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: {{ .Values.probes.liveness.port }}
+              scheme: HTTP
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            successThreshold: {{ .Values.probes.liveness.successThreshold }}
