@@ -24,9 +24,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     # The AWS OIDC token is harmless on PRs because the IAM
-    # trust policy only allows the main branch subject.
+    # trust policy only allows the ain branch subject.
     #
-    # These permissions are required for the main-branch
+    # These permissions are required for the master-branch
     # publishing/provenance steps later in this job.
     permissions:
       contents: read
@@ -298,10 +298,10 @@ jobs:
 
 
       # --------------------------------------------------------
-      # 22. Publish only from main
+      # 22. Publish only from master
       # --------------------------------------------------------
       - name: Configure AWS credentials
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -314,12 +314,12 @@ jobs:
       # 23. Get AWS account ID
       # --------------------------------------------------------
       #
-      # This runs only for main because subsequent ECR steps
-      # are main-only.
+      # This runs only for master because subsequent ECR steps
+      # are master-only.
       #
       - name: Validate AWS identity
         id: account
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           set -euo pipefail
 
@@ -336,7 +336,7 @@ jobs:
       # 24. Login to ECR
       # --------------------------------------------------------
       - name: Login to Amazon ECR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: aws-actions/amazon-ecr-login@v2.1.6
 
 
@@ -344,7 +344,7 @@ jobs:
       # 25. Build ECR image reference
       # --------------------------------------------------------
       - name: Set ECR image reference
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           set -euo pipefail
 
@@ -367,7 +367,7 @@ jobs:
       # 26. Tag local image for ECR
       # --------------------------------------------------------
       - name: Tag image for ECR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           set -euo pipefail
 
@@ -381,7 +381,7 @@ jobs:
       # --------------------------------------------------------
       - name: Push image to ECR
         id: push
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         run: |
           set -euo pipefail
 
@@ -427,7 +427,7 @@ jobs:
       # associated with the repository and build.
       #
       - name: Attest container image provenance
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/attest@v4
         with:
           subject-name: ${{ env.ECR_IMAGE_NAME }}
