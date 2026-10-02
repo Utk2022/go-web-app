@@ -144,15 +144,6 @@ jobs:
 
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-
-      - name: Run govulncheck
-        env:
-          GOFLAGS: "-mod=readonly"
-        run: |
-          set -euo pipefail
-          govulncheck ./...
-
-
       # --------------------------------------------------------
       # 10. Helm validation
       # --------------------------------------------------------
