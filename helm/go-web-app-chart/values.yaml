@@ -3,7 +3,7 @@ replicaCount: 3
 image:
   repository: 891943684030.dkr.ecr.us-east-1.amazonaws.com/go-web-app-sre-dev/go-web-app
   pullPolicy: IfNotPresent
-  tag: 4ffd10324fec
+  tag: af79ebda5cbd
 
 service:
   type: ClusterIP

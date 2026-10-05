@@ -140,10 +140,10 @@ module "eks" {
       name = "${local.name}"
 
       ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = ["t3a.small"]
-      capacity_type  = "ON_DEMAND"
+      instance_types = ["t3.small"]
+      capacity_type  = "SPOT"
 
-      disk_size = 30
+      disk_size = 20
 
       min_size     = var.node_group_min_size
       desired_size = var.node_group_desired_size
