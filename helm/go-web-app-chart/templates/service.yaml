@@ -4,6 +4,7 @@ metadata:
   name: go-web-app
   labels:
     app: go-web-app
+    app.kubernetes.io/name: go-web-app
 spec:
   type: {{ .Values.service.type }}
 
